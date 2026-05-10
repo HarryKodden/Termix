@@ -17,6 +17,30 @@ const AUTH_TIMEOUT = 60 * 1000;
 
 export const OPKSSH_CALLBACK_PATH = "/host/opkssh-callback";
 
+/** Public site origin only — strips duplicate callback suffix if callers pass a bad origin. */
+function normalizeRequestOriginForOpkssh(requestOrigin: string): string {
+  let base = requestOrigin.trim().replace(/\/+$/, "");
+  while (base.endsWith(OPKSSH_CALLBACK_PATH)) {
+    base = base
+      .slice(0, -OPKSSH_CALLBACK_PATH.length)
+      .trim()
+      .replace(/\/+$/, "");
+  }
+  return base;
+}
+
+function opksshPublicBaseFromRemoteRedirectUri(remoteRedirectUri: string): string {
+  let base = remoteRedirectUri.trim();
+  while (base.endsWith(OPKSSH_CALLBACK_PATH)) {
+    base = base
+      .slice(0, -OPKSSH_CALLBACK_PATH.length)
+      .trim()
+      .replace(/\/+$/, "");
+  }
+  // In direct dev mode the WS server (30002) is separate from the HTTP API (30001)
+  return base.replace(/:30002\b/, ":30001");
+}
+
 interface OPKSSHAuthSession {
   requestId: string;
   userId: string;
@@ -294,7 +318,8 @@ export async function startOPKSSHAuth(
   }
 
   const requestId = randomUUID();
-  const remoteRedirectUri = `${requestOrigin}${OPKSSH_CALLBACK_PATH}`;
+  const normalizedOrigin = normalizeRequestOriginForOpkssh(requestOrigin);
+  const remoteRedirectUri = `${normalizedOrigin}${OPKSSH_CALLBACK_PATH}`;
 
   sshLogger.info("Starting OPKSSH auth session", {
     operation: "opkssh_start_auth_remote_redirect_uri",
@@ -302,6 +327,7 @@ export async function startOPKSSHAuth(
     userId,
     hostId,
     requestOrigin,
+    normalizedRequestOrigin: normalizedOrigin,
     remoteRedirectUri,
     providerAliases: (configCheck.providers || []).map((p) => p.alias),
   });
@@ -547,10 +573,7 @@ function handleOPKSSHOutput(requestId: string, output: string): void {
 
     session.localPort = actualPort;
 
-    const baseUrl = session.remoteRedirectUri
-      .replace(/\/host\/opkssh-callback$/, "")
-      // In direct dev mode the WS server (30002) is separate from the HTTP API (30001)
-      .replace(/:30002\b/, ":30001");
+    const baseUrl = opksshPublicBaseFromRemoteRedirectUri(session.remoteRedirectUri);
     const proxiedChooserUrl = `${baseUrl}/host/opkssh-chooser/${requestId}`;
 
     session.status = "waiting_for_auth";

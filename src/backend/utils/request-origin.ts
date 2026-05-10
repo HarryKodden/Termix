@@ -33,14 +33,18 @@ export function getRequestOrigin(req: Request | IncomingMessage): string {
       ? hostHeaderRaw.split(",")[0].trim()
       : String(hostHeaderRaw);
 
-  if (!port && hostHeader.includes(":")) {
-    const parts = hostHeader.split(":");
+  // Host / X-Forwarded-Host must be hostname[:port] only (RFC 9110). Some reverse
+  // proxies incorrectly append a URI path; strip it so request-derived URLs stay valid.
+  const hostHeaderNoPath = hostHeader.split("/")[0].trim();
+
+  if (!port && hostHeaderNoPath.includes(":")) {
+    const parts = hostHeaderNoPath.split(":");
     if (parts.length === 2 && !parts[0].includes("[")) {
       port = parts[1];
     }
   }
 
-  const hostWithoutPort = hostHeader.split(":")[0];
+  const hostWithoutPort = hostHeaderNoPath.split(":")[0];
   if (port) {
     const isDefaultPort =
       (protocol === "http" && port === "80") ||
