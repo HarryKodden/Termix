@@ -29,7 +29,9 @@ function normalizeRequestOriginForOpkssh(requestOrigin: string): string {
   return base;
 }
 
-function opksshPublicBaseFromRemoteRedirectUri(remoteRedirectUri: string): string {
+function opksshPublicBaseFromRemoteRedirectUri(
+  remoteRedirectUri: string,
+): string {
   let base = remoteRedirectUri.trim();
   while (base.endsWith(OPKSSH_CALLBACK_PATH)) {
     base = base
@@ -573,7 +575,9 @@ function handleOPKSSHOutput(requestId: string, output: string): void {
 
     session.localPort = actualPort;
 
-    const baseUrl = opksshPublicBaseFromRemoteRedirectUri(session.remoteRedirectUri);
+    const baseUrl = opksshPublicBaseFromRemoteRedirectUri(
+      session.remoteRedirectUri,
+    );
     const proxiedChooserUrl = `${baseUrl}/host/opkssh-chooser/${requestId}`;
 
     session.status = "waiting_for_auth";
