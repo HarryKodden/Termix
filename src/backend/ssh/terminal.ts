@@ -2114,7 +2114,11 @@ wss.on("connection", async (ws: WebSocket, req) => {
       host: ip,
       port,
       username,
-      tryKeyboard: resolvedCredentials.authType !== "none",
+      // OPKSSH uses only publickey (custom authHandler + cert patch); keyboard
+      // alongside it can break auth ordering on some OpenSSH servers.
+      tryKeyboard:
+        resolvedCredentials.authType !== "none" &&
+        resolvedCredentials.authType !== "opkssh",
       keepaliveInterval:
         typeof hostKeepaliveInterval === "number"
           ? hostKeepaliveInterval
@@ -2275,6 +2279,12 @@ wss.on("connection", async (ws: WebSocket, req) => {
               hostId: id,
             }),
           );
+          try {
+            sshConn?.destroy();
+          } catch {
+            /* ignore */
+          }
+          cleanupAuthState(connectionTimeout);
           return;
         }
 
@@ -2298,6 +2308,12 @@ wss.on("connection", async (ws: WebSocket, req) => {
                 : "Unknown error"),
           }),
         );
+        try {
+          sshConn?.destroy();
+        } catch {
+          /* ignore */
+        }
+        cleanupAuthState(connectionTimeout);
         return;
       }
     } else {

@@ -621,7 +621,21 @@ function handleOPKSSHOutput(requestId: string, output: string): void {
   }
 
   const certMatch = session.stdoutBuffer.match(
-    /(ecdsa-sha2-nistp256-cert-v01@openssh\.com\s+[A-Za-z0-9+/=]+|ssh-rsa-cert-v01@openssh\.com\s+[A-Za-z0-9+/=]+|ssh-ed25519-cert-v01@openssh\.com\s+[A-Za-z0-9+/=]+)/,
+    new RegExp(
+      "(" +
+        [
+          "ecdsa-sha2-nistp256-cert-v01@openssh\\.com",
+          "ecdsa-sha2-nistp384-cert-v01@openssh\\.com",
+          "ecdsa-sha2-nistp521-cert-v01@openssh\\.com",
+          "ssh-ed25519-cert-v01@openssh\\.com",
+          "ssh-rsa-cert-v01@openssh\\.com",
+          "rsa-sha2-256-cert-v01@openssh\\.com",
+          "rsa-sha2-512-cert-v01@openssh\\.com",
+        ]
+          .map((t) => `${t}\\s+[A-Za-z0-9+/=]+`)
+          .join("|") +
+        ")",
+    ),
   );
   if (certMatch) {
     session.sshCertBuffer = certMatch[1].trim();
