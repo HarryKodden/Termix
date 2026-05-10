@@ -3,10 +3,14 @@ name: PR Check
 on:
   pull_request:
     branches: [main, dev-*]
+  push:
+    branches: [main, dev-*]
 
 jobs:
   lint-and-build:
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    # Forks have no Blacksmith runners — default GitHub-hosted. Set repo/org variable
+    # CI_RUNNER (e.g. blacksmith-2vcpu-ubuntu-2404) to use a custom label when available.
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
 
     env:
       NODE_OPTIONS: "--max-old-space-size=4096"
