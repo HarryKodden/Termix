@@ -38,3 +38,13 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  push-docker-image:
+    name: Push Docker image (GHCR)
+    needs: lint-and-build
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/docker-build.yml
+    secrets: inherit
