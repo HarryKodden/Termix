@@ -1071,7 +1071,25 @@ wss.on("connection", async (ws: WebSocket, req) => {
           hostConfig?: ConnectToHostData["hostConfig"];
         };
 
-        resetConnectionState();
+        // Do not call resetConnectionState() here — it sets isConnecting=false and
+        // allows a second opkssh_auth_completed (duplicate WS message) to start a
+        // parallel handleConnectToHost while the first is still awaiting I/O.
+        if (isConnecting || isConnected) {
+          sshLogger.info("Ignoring duplicate or late opkssh_auth_completed", {
+            operation: "opkssh_auth_completed_ignored",
+            userId,
+            isConnecting,
+            isConnected,
+            hostId: completedData.hostId,
+          });
+          break;
+        }
+
+        isKeyboardInteractive = false;
+        keyboardInteractiveResponded = false;
+        keyboardInteractiveFinish = null;
+        totpPromptSent = false;
+        warpgateAuthPromptSent = false;
 
         const reconnectConfig: ConnectToHostData = {
           cols: completedData.cols || 80,
