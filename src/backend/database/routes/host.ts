@@ -5000,9 +5000,12 @@ router.get("/opkssh-callback", async (req: Request, res: Response) => {
 
     if (userId) {
       userSessions = getActiveSessionsForUser(userId);
-    } else {
-      // No JWT cookie (e.g. OAuth redirect landed in external browser).
-      // Try to find the correct session via the OAuth state parameter.
+    }
+
+    // If JWT is missing, or present but no in-memory sessions (WS reconnect,
+    // race, or another replica without sticky sessions), resolve via OAuth
+    // `state` or the chooser cookie — same as anonymous browser flow.
+    if (userSessions.length === 0) {
       const oauthState = req.query.state as string | undefined;
 
       if (oauthState) {
@@ -5010,35 +5013,56 @@ router.get("/opkssh-callback", async (req: Request, res: Response) => {
         if (mappedRequestId) {
           const mappedSession = getActiveAuthSession(mappedRequestId);
           if (mappedSession) {
-            userSessions = [mappedSession];
-            clearOAuthState(oauthState);
-            sshLogger.info("Resolved session via OAuth state parameter", {
-              operation: "opkssh_callback_state_lookup",
-              requestId: mappedRequestId,
-            });
+            if (userId && mappedSession.userId !== userId) {
+              sshLogger.warn(
+                "OAuth state maps to a different Termix user; ignoring",
+                {
+                  operation: "opkssh_callback_state_user_mismatch",
+                  jwtUserId: userId,
+                  sessionUserId: mappedSession.userId,
+                },
+              );
+            } else {
+              userSessions = [mappedSession];
+              clearOAuthState(oauthState);
+              sshLogger.info("Resolved session via OAuth state parameter", {
+                operation: "opkssh_callback_state_lookup",
+                requestId: mappedRequestId,
+                hadJwtUser: !!userId,
+              });
+            }
           }
         }
       }
 
-      // Fallback: use the opkssh_request_id cookie set by the chooser proxy.
-      // State capture only works for 3xx redirects; if OPKSSH redirects via
-      // JavaScript in the HTML, the state is never registered in the map.
       if (userSessions.length === 0) {
         const cookieRequestId = req.cookies?.opkssh_request_id;
         if (cookieRequestId) {
           const cookieSession = getActiveAuthSession(cookieRequestId);
           if (cookieSession) {
-            userSessions = [cookieSession];
-            res.clearCookie("opkssh_request_id", { path: "/host/" });
-            sshLogger.info("Resolved session via opkssh_request_id cookie", {
-              operation: "opkssh_callback_cookie_lookup",
-              requestId: cookieRequestId,
-            });
+            if (userId && cookieSession.userId !== userId) {
+              sshLogger.warn(
+                "opkssh_request_id cookie maps to a different Termix user; ignoring",
+                {
+                  operation: "opkssh_callback_cookie_user_mismatch",
+                  jwtUserId: userId,
+                  sessionUserId: cookieSession.userId,
+                },
+              );
+            } else {
+              userSessions = [cookieSession];
+              res.clearCookie("opkssh_request_id", { path: "/host/" });
+              sshLogger.info("Resolved session via opkssh_request_id cookie", {
+                operation: "opkssh_callback_cookie_lookup",
+                requestId: cookieRequestId,
+                hadJwtUser: !!userId,
+              });
+            }
           }
         }
       }
 
-      if (userSessions.length === 0) {
+      if (userSessions.length === 0 && !userId) {
         sshLogger.warn(
           "OAuth callback with no JWT, no matching state, and no session cookie",
           {
@@ -5072,6 +5096,9 @@ router.get("/opkssh-callback", async (req: Request, res: Response) => {
       sshLogger.error("No active sessions for callback", {
         operation: "opkssh_callback_no_sessions",
         userId,
+        hint:
+          "If you use multiple app replicas, enable sticky sessions for /host/opkssh-callback and /ssh/websocket. " +
+          "Keep the terminal tab open until OAuth finishes, or set OPKSSH_WS_CLOSE_GRACE_MS on the server.",
       });
       res.status(404).send("No active authentication session found");
       return;

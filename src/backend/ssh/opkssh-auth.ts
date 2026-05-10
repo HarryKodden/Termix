@@ -71,6 +71,8 @@ interface OPKSSHAuthSession {
   };
   createdAt: Date;
   approvalTimeout: NodeJS.Timeout;
+  /** If the terminal WS drops while waiting on the browser, cleanup is delayed so OAuth can still hit /host/opkssh-callback. */
+  wsCloseGraceTimer?: NodeJS.Timeout;
   cleanup: () => Promise<void>;
 }
 
@@ -391,7 +393,35 @@ export async function startOPKSSHAuth(
     session.approvalTimeout = timeout;
 
     ws.on("close", () => {
-      cleanup();
+      const live = activeAuthSessions.get(requestId);
+      const deferMs = Number.parseInt(
+        process.env.OPKSSH_WS_CLOSE_GRACE_MS || "120000",
+        10,
+      );
+      const deferCleanup =
+        deferMs > 0 &&
+        live &&
+        (live.status === "starting" || live.status === "waiting_for_auth");
+
+      if (deferCleanup) {
+        if (live.wsCloseGraceTimer) {
+          clearTimeout(live.wsCloseGraceTimer);
+        }
+        live.wsCloseGraceTimer = setTimeout(() => {
+          void cleanup();
+        }, deferMs);
+        sshLogger.info(
+          "Terminal WebSocket closed during OPKSSH browser auth; deferring session cleanup for OAuth callback",
+          {
+            operation: "opkssh_ws_close_grace",
+            requestId,
+            deferMs,
+            status: live.status,
+          },
+        );
+      } else {
+        void cleanup();
+      }
     });
 
     activeAuthSessions.set(requestId, session as OPKSSHAuthSession);
@@ -910,6 +940,11 @@ async function cleanupAuthSession(requestId: string): Promise<void> {
     if (!session) {
       cleanupInProgress.delete(requestId);
       return;
+    }
+
+    if (session.wsCloseGraceTimer) {
+      clearTimeout(session.wsCloseGraceTimer);
+      session.wsCloseGraceTimer = undefined;
     }
 
     if (session.approvalTimeout) {
