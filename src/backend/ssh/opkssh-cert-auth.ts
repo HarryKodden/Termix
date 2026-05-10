@@ -12,6 +12,7 @@ import type {
   ConnectConfig,
   PublicKeyAuthMethod,
 } from "ssh2";
+import { sshLogger } from "../utils/logger.js";
 
 interface OPKSSHToken {
   privateKey: string;
@@ -99,14 +100,26 @@ export async function setupOPKSSHCertAuth(
   }
   privKey[pubSSHSym] = certBlob;
 
-  // Wrap sign() for ECDSA cert keys
+  const baseAlgo = certType.replace(/-cert-v\d+@openssh\.com$/, "");
+  sshLogger.info("OPKSSH ssh2 cert auth setup", {
+    operation: "opkssh_cert_auth_setup",
+    username,
+    certType,
+    baseAlgo,
+    certBlobBytes: certBlob.length,
+  });
+
+  const origSign = privKey.sign.bind(privKey);
+  /** ssh2 may pass cert algorithm names to sign(); the private key signs with the base type only. */
+  const baseSignAlgo = (algo?: string) =>
+    algo?.includes("-cert-")
+      ? algo.replace(/-cert-v\d+@openssh\.com$/, "")
+      : algo;
+
+  // Wrap sign() for ECDSA cert keys (DER → SSH wire format + base algo)
   if (privKey.type.startsWith("ecdsa-")) {
-    const origSign = privKey.sign.bind(privKey);
     privKey.sign = (data: Buffer, algo?: string) => {
-      const sigAlgo = algo?.includes("-cert-")
-        ? algo.replace(/-cert-v\d+@openssh\.com$/, "")
-        : algo;
-      const sig = origSign(data, sigAlgo);
+      const sig = origSign(data, baseSignAlgo(algo));
       if (sig instanceof Error || sig[0] !== 0x30) return sig;
       // Convert DER-encoded ECDSA signature to SSH wire format
       try {
@@ -128,6 +141,10 @@ export async function setupOPKSSHCertAuth(
         return sig;
       }
     };
+  } else if (privKey.type.includes("-cert-")) {
+    // Ed25519, RSA, etc. — still need base algorithm for the signer
+    privKey.sign = (data: Buffer, algo?: string) =>
+      origSign(data, baseSignAlgo(algo));
   }
 
   // Set up authHandler to bypass ssh2's cert type rejection
@@ -156,7 +173,6 @@ export async function setupOPKSSHCertAuth(
 
   // Monkey-patch Protocol.authPK after connect() to fix the signature
   // wrapper algorithm for cert types.
-  const baseAlgo = certType.replace(/-cert-v\d+@openssh\.com$/, "");
   const origConnect = client.connect.bind(client);
   const patchedClient = client as OPKSSHClient;
   patchedClient.connect = (cfg: ConnectConfig) => {
